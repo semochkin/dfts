@@ -3,6 +3,8 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSelection;
 import akka.cluster.Cluster;
 import akka.cluster.ClusterEvent;
+import akka.cluster.Member;
+import akka.cluster.MemberStatus;
 import akka.cluster.pubsub.DistributedPubSub;
 import akka.cluster.pubsub.DistributedPubSubMediator;
 import akka.event.Logging;
@@ -21,6 +23,7 @@ import java.util.Arrays;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.stream.StreamSupport;
 
 import static org.apache.commons.codec.binary.Hex.*;
 
@@ -93,7 +96,7 @@ public class Listener extends AbstractActor {
 				       .match(ClusterEvent.MemberUp.class, mUp -> {
 					       InetAddress local = InetAddress.getLocalHost();
 					       log.info("Member is Up: {}/:::/{}", mUp.member(), getSender());
-					       ActorRef mediator = DistributedPubSub.get(getContext().system()).mediator();
+					       ActorRef mediator = DistributedPubSub.get(cluster.system()).mediator();
 					       CertMsg certMsg = new CertMsg(local.getCanonicalHostName(), String.valueOf(local.getHostAddress()), "localhost" + hashCode(), getSelf().path().toString(), null);
 					       mediator.tell(new DistributedPubSubMediator.Publish("welcome", certMsg), getSelf());
 				       })
@@ -109,8 +112,6 @@ public class Listener extends AbstractActor {
 				       .match(DistributedPubSubMediator.SubscribeAck.class, ack -> {
 					       ActorRef mediator = DistributedPubSub.get(cluster.system()).mediator();
 					       mediator.tell(new DistributedPubSubMediator.Publish("welcome", String.valueOf(System.currentTimeMillis())), getSelf());
-					       mediator.tell(new DistributedPubSubMediator.Send("/user/destination", "34467979",
-							       false), getSelf());
 				       })
 				       .match(CertMsg.class, message -> {
 					       log.info("Got message: " + message);
@@ -120,6 +121,9 @@ public class Listener extends AbstractActor {
 					       FileRequest msg = new FileRequest(file);
 					       ActorSelection selection = cluster.system().actorSelection(message.getAddress());
 					       ActorRef self = getSelf();
+					       InetAddress local = InetAddress.getLocalHost();
+					       CertReply certMsg = new CertReply(local.getCanonicalHostName(), String.valueOf(local.getHostAddress()), "localhost" + hashCode(), getSelf().path().toString(), null);
+					       getSender().tell(certMsg, self);
 					       ask(selection, msg, Duration.ofMinutes(1)).toCompletableFuture().thenAccept(result -> {
 						       String host = selection.pathString();
 						       if (result instanceof Accept) {
@@ -129,6 +133,11 @@ public class Listener extends AbstractActor {
 							       log.info(String.format("%s refused %s", host, file.getAbsolutePath()));
 						       }
 					       });
+				       })
+				       .match(CertReply.class, message -> {
+					       log.info("Got reply: " + message);
+					       //store peer in list
+					       addPeer(message.getAlias(), message.getAddress());
 				       })
 				       .match(DistributedPubSubMediator.SubscribeAck.class, msg -> log.info("subscribed"))
 				       .match(FileRequest.class, request -> {
