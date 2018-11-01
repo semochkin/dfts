@@ -9,18 +9,20 @@ public class CertMsg implements Serializable
 	private String hostname;
 	private String ip;
 	private String alias;
+	private String address;
 	private byte[] data;
 
 	public CertMsg()
 	{
 	}
 
-	public CertMsg(String hostname, String ip, String alias, byte[] data)
+	public CertMsg(String hostname, String ip, String alias, String address, byte[] data)
 	{
 		this.hostname = hostname;
 		this.ip = ip;
 		this.alias = alias;
 		this.data = data;
+		this.address = address;
 	}
 
 	public String getHostname()
@@ -43,6 +45,10 @@ public class CertMsg implements Serializable
 		return data;
 	}
 
+	public String getAddress() {
+		return address;
+	}
+
 	@Override
 	public String toString()
 	{
@@ -50,6 +56,7 @@ public class CertMsg implements Serializable
 		sb.append("hostname='").append(hostname).append('\'');
 		sb.append(", ip='").append(ip).append('\'');
 		sb.append(", alias='").append(alias).append('\'');
+		sb.append(", @ ").append(address);
 		sb.append('}');
 		return sb.toString();
 	}

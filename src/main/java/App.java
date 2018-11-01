@@ -1,8 +1,3 @@
-import akka.actor.Address;
-import akka.cluster.Cluster;
-
-import java.net.*;
-
 import akka.actor.ActorSystem;
 import akka.actor.Props;
 
@@ -36,7 +31,6 @@ public class App
 			// Create an actor that handles cluster domain events
 			system.actorOf(Props.create(Listener.class),
 				"clusterListener");
-			system.actorOf(Props.create(Destination.class), "destination");
 		}
 	}
 
