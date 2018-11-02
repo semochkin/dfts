@@ -7,6 +7,8 @@ import akka.cluster.pubsub.DistributedPubSub;
 import akka.cluster.pubsub.DistributedPubSubMediator;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
+import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.Maps;
 import crypto.RsaUtil;
 
 import javax.swing.*;
@@ -28,6 +30,7 @@ import java.security.PrivateKey;
 import java.security.PublicKey;
 import java.time.Duration;
 import java.util.Arrays;
+import java.util.Map;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -202,6 +205,11 @@ public class Listener extends AbstractActor {
 						   MessageDigest digest = MessageDigest.getInstance("sha-512");
 						   digest.update(buffer);
 						   log.info(String.format("%s: %s", file.getAbsolutePath(), Arrays.equals(digest.digest(), request.getHash())));
+						   if (Arrays.equals(digest.digest(), request.getHash())) {
+						   		invokeChainCode(getToken(), "", ImmutableMap.of(
+
+								));
+						   }
 						   out.write(buffer);
 						   out.flush();
 						   out.close();
@@ -251,5 +259,27 @@ public class Listener extends AbstractActor {
 		peers.put(alias, address);
 		peerList.setListData(peers.keySet().toArray(new String[0]));
 		window.pack();
+	}
+
+	private String getToken() {
+		try {
+			return new RestApiHelper().doAuth("http://localhost:4000/users", ImmutableMap.of(
+					"username", "noname",
+					"password", "qwerty"
+			));
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
+	}
+
+	private void invokeChainCode(String token, String function, Map<String, String> params) {
+		try {
+			new RestApiHelper(token).doPost("http://localhost:4000/channels/dfts/chaincodes/dfts", ImmutableMap.of(
+				"fcn", function,
+				"args", params
+			));
+		} catch (IOException e) {
+			e.printStackTrace();
+		}
 	}
 }
