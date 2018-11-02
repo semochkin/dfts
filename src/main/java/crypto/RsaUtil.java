@@ -19,10 +19,10 @@ public class RsaUtil {
     {
         KeyPairGenerator keyGen = null;
         try {
-            keyGen = KeyPairGenerator.getInstance("RSA", "BC");
+            keyGen = KeyPairGenerator.getInstance("RSA");
             keyGen.initialize(512, new SecureRandom());
             return keyGen.generateKeyPair();
-        } catch (NoSuchAlgorithmException | NoSuchProviderException e) {
+        } catch (Exception e) {
             throw new IllegalStateException("Can't generate key pair", e);
         }
     }

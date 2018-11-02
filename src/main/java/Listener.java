@@ -3,12 +3,11 @@ import akka.actor.ActorRef;
 import akka.actor.ActorSelection;
 import akka.cluster.Cluster;
 import akka.cluster.ClusterEvent;
-import akka.cluster.Member;
-import akka.cluster.MemberStatus;
 import akka.cluster.pubsub.DistributedPubSub;
 import akka.cluster.pubsub.DistributedPubSubMediator;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
+import crypto.RsaUtil;
 
 import javax.swing.*;
 import java.awt.*;
@@ -17,13 +16,21 @@ import java.net.InetAddress;
 
 import static akka.pattern.PatternsCS.ask;
 
+import java.net.InetSocketAddress;
+import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
+import java.nio.channels.WritableByteChannel;
+import java.nio.file.StandardOpenOption;
+import java.security.KeyPair;
 import java.security.MessageDigest;
+import java.security.PrivateKey;
+import java.security.PublicKey;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.stream.StreamSupport;
 
 import static org.apache.commons.codec.binary.Hex.*;
 
@@ -37,14 +44,26 @@ public class Listener extends AbstractActor {
 	}
 
 	private static final class Accept extends Reply implements Serializable {
-		private String path;
+		private String uuid;
+		private byte[] key;
+		private InetSocketAddress addr;
 
-		public Accept(String path) {
-			this.path = path;
+		Accept(String uuid, byte[] key, InetSocketAddress addr) {
+			this.uuid = uuid;
+			this.key = key;
+			this.addr = addr;
 		}
 
-		public String getPath() {
-			return path;
+		String getUuid() {
+			return uuid;
+		}
+
+		byte[] getKey() {
+			return key;
+		}
+
+		public InetSocketAddress getAddr() {
+			return addr;
 		}
 	}
 
@@ -59,6 +78,7 @@ public class Listener extends AbstractActor {
 	private ConcurrentHashMap<String, FileRequest> requests = new ConcurrentHashMap<>();
 	private JFrame window = new JFrame();
 	private JList<String> peerList = new JList<>();
+	private byte[] key;
 
 	public Listener() {
 		Container contentPane = window.getContentPane();
@@ -66,15 +86,43 @@ public class Listener extends AbstractActor {
 		contentPane.add(peerList, BorderLayout.CENTER);
 		JButton clicker = new JButton("send");
 		contentPane.add(clicker, BorderLayout.SOUTH);
-		clicker.addActionListener(event -> {
-			getSelf().tell(new File("settings.gradle"), null);
-		});
+		clicker.addActionListener(event -> getSelf().tell(new File("settings.gradle"), null));
+		File keyFile = new File("client.key");
+		if (keyFile.canRead()) {
+			try (FileChannel src = FileChannel.open(keyFile.toPath(), StandardOpenOption.READ)) {
+				ByteArrayOutputStream buf = new ByteArrayOutputStream();
+				WritableByteChannel writableByteChannel = Channels.newChannel(buf);
+				src.transferTo(0, keyFile.length(), writableByteChannel);
+				key = buf.toByteArray();
+			} catch (Exception e) {
+				log.error(e, "Failed to read private key");
+			}
+		} else {
+			KeyPair keyPair = RsaUtil.generateKeyPair();
+			PrivateKey privateKey = keyPair.getPrivate();
+			PublicKey publicKey = keyPair.getPublic();
+			key = privateKey.getEncoded();
+			saveKey(keyFile, key, "could not store private key");
+			saveKey(new File("client.pub"), publicKey.getEncoded(), "could not store public key");
+		}
+	}
+
+	private void saveKey(File keyFile, byte[] encoded, String message) {
+		ByteBuffer buf = ByteBuffer.wrap(encoded);
+		try (FileChannel dst = FileChannel.open(keyFile.toPath(), StandardOpenOption.WRITE, StandardOpenOption.CREATE)) {
+			dst.write(buf);
+			log.info("saved " + keyFile.getAbsolutePath());
+		} catch (Exception e) {
+			log.error(e, message);
+		}
 	}
 
 	//subscribe to cluster changes
 	@Override
 	public void preStart() {
-		cluster.subscribe(getSelf(), ClusterEvent.MemberUp.class);
+//		cluster.subscribe(getSelf(), ClusterEvent.MemberUp.class);
+		cluster.subscribe(getSelf(), ClusterEvent.initialStateAsEvents(),
+				ClusterEvent.MemberEvent.class, ClusterEvent.UnreachableMember.class);
 		ActorRef mediator = DistributedPubSub.get(cluster.system()).mediator();
 		mediator.tell(new DistributedPubSubMediator.Subscribe("welcome", getSelf()),
 				getSelf());
@@ -97,7 +145,7 @@ public class Listener extends AbstractActor {
 					       InetAddress local = InetAddress.getLocalHost();
 					       log.info("Member is Up: {}/:::/{}", mUp.member(), getSender());
 					       ActorRef mediator = DistributedPubSub.get(cluster.system()).mediator();
-					       CertMsg certMsg = new CertMsg(local.getCanonicalHostName(), String.valueOf(local.getHostAddress()), "localhost" + hashCode(), getSelf().path().toString(), null);
+					       CertMsg certMsg = new CertMsg(local.getCanonicalHostName(), String.valueOf(local.getHostAddress()), "localhost" + hashCode(), getSelf().path().toString(), key);
 					       mediator.tell(new DistributedPubSubMediator.Publish("welcome", certMsg), getSelf());
 				       })
 				       .match(ClusterEvent.UnreachableMember.class, mUnreachable ->
@@ -118,21 +166,13 @@ public class Listener extends AbstractActor {
 					       //store peer in list
 					       addPeer(message.getAlias(), message.getAddress());
 					       File file = new File("build.gradle");
-					       FileRequest msg = new FileRequest(file);
+					       FileRequest msg = new FileRequest(file, key);
 					       ActorSelection selection = cluster.system().actorSelection(message.getAddress());
 					       ActorRef self = getSelf();
 					       InetAddress local = InetAddress.getLocalHost();
 					       CertReply certMsg = new CertReply(local.getCanonicalHostName(), String.valueOf(local.getHostAddress()), "localhost" + hashCode(), getSelf().path().toString(), null);
 					       getSender().tell(certMsg, self);
-					       ask(selection, msg, Duration.ofMinutes(1)).toCompletableFuture().thenAccept(result -> {
-						       String host = selection.pathString();
-						       if (result instanceof Accept) {
-							       log.info(String.format("%s accepted %s", host, file.getAbsolutePath()));
-							       selection.tell(new FileData(msg.getData(), ((Accept) result).getPath()), self);
-						       } else {
-							       log.info(String.format("%s refused %s", host, file.getAbsolutePath()));
-						       }
-					       });
+					       sendFile(file, msg, selection, self);
 				       })
 				       .match(CertReply.class, message -> {
 					       log.info("Got reply: " + message);
@@ -148,7 +188,7 @@ public class Listener extends AbstractActor {
 						       log.info(String.format("accepting file %s of %s bytes with hash %s", request.getFileName(), request.getSize(), hash));
 						       log.info(getSender().path().toString());
 						       requests.put(uuid, request);
-						       getSender().tell(new Accept(uuid), getSelf());
+						       getSender().tell(new Accept(uuid, key, getContractAddress(hash, request.getKey(), key)), getSelf());
 					       } else {
 						       getSender().tell(REFUSE, getSelf());
 					       }
@@ -164,26 +204,46 @@ public class Listener extends AbstractActor {
 						   out.write(buffer);
 						   out.flush();
 						   out.close();
+						   decrypt(file);
 					   })
 					   .match(File.class, file -> {
 						   String selectedValue = peerList.getSelectedValue();
 						   if (selectedValue != null) {
-							   FileRequest msg = new FileRequest(file);
+							   FileRequest msg = new FileRequest(file, key);
 							   ActorSelection selection = cluster.system().actorSelection(peers.get(selectedValue));
 							   ActorRef self = getSelf();
-							   ask(selection, msg, Duration.ofMinutes(1)).toCompletableFuture().thenAccept(result -> {
-								   String host = selection.pathString();
-								   if (result instanceof Accept) {
-									   log.info(String.format("%s accepted %s", host, file.getAbsolutePath()));
-									   selection.tell(new FileData(msg.getData(), ((Accept) result).getPath()), self);
-								   } else {
-									   log.info(String.format("%s refused %s", host, file.getAbsolutePath()));
-								   }
-							   });
+							   sendFile(file, msg, selection, self);
 						   }
 					   })
 				       .matchAny(obj -> log.error("Got " + obj))
 				       .build();
+	}
+
+	private void decrypt(File file) {
+		//todo
+	}
+
+	private void sendFile(File file, FileRequest msg, ActorSelection selection, ActorRef self) {
+		ask(selection, msg, Duration.ofMinutes(1)).toCompletableFuture().thenAccept(result -> {
+			String host = selection.pathString();
+			if (result instanceof Accept) {
+				log.info(String.format("%s accepted %s", host, file.getAbsolutePath()));
+				Accept accept = (Accept) result;
+				handleAccept(key, accept.getKey(), accept.getAddr());
+				selection.tell(new FileData(msg.getData(), accept.getUuid()), self);
+			} else {
+				log.info(String.format("%s refused %s", host, file.getAbsolutePath()));
+			}
+		});
+	}
+
+	private void handleAccept(byte[] key, byte[] key1, InetSocketAddress addr) {
+		//todo send feedback to addr of smart contract
+	}
+
+	private InetSocketAddress getContractAddress(String hash, byte[] keyA, byte[] keyB) {
+		//todo query smart contract
+		return null;
 	}
 
 	private void addPeer(String alias, String address) {

@@ -6,12 +6,13 @@ public class FileRequest implements java.io.Serializable {
 	private String fileName;
 	private byte[] hash;
 	private long size;
-	private byte[] data;
+	private byte[] key;
+	private transient byte[] data;
 
 	public FileRequest() {
 	}
 
-	public FileRequest(File file) throws NoSuchAlgorithmException, IOException {
+	public FileRequest(File file, byte[] key) throws NoSuchAlgorithmException, IOException {
 		this.fileName = file.getName();
 		MessageDigest digest = MessageDigest.getInstance("sha-512");
 		ByteArrayOutputStream out = new ByteArrayOutputStream();
@@ -26,6 +27,7 @@ public class FileRequest implements java.io.Serializable {
 		hash = digest.digest();
 		size = file.length();
 		data = out.toByteArray();
+		this.key = key;
 	}
 
 	public String getFileName() {
@@ -44,4 +46,7 @@ public class FileRequest implements java.io.Serializable {
 		return data;
 	}
 
+	public byte[] getKey() {
+		return key;
+	}
 }
