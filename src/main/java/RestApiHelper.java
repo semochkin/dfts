@@ -46,7 +46,7 @@ public class RestApiHelper {
         return executeMethod(post);
     }
 
-    public String doAuth(String url, Map<String, String> params) throws IOException {
+    public String doAuth(String url, Map<String, Object> params) throws IOException {
         return doPost(url, params);
     }
 
