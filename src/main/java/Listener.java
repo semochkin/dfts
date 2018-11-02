@@ -146,6 +146,7 @@ public class Listener extends AbstractActor {
 					       log.info("Member is Up: {}/:::/{}", mUp.member(), getSender());
 					       ActorRef mediator = DistributedPubSub.get(cluster.system()).mediator();
 					       CertMsg certMsg = new CertMsg(local.getCanonicalHostName(), String.valueOf(local.getHostAddress()), "localhost" + hashCode(), getSelf().path().toString(), key);
+					       cluster.system().actorSelection(mUp.member().address().toString() + "/user/clusterListener");
 					       mediator.tell(new DistributedPubSubMediator.Publish("welcome", certMsg), getSelf());
 				       })
 				       .match(ClusterEvent.UnreachableMember.class, mUnreachable ->
