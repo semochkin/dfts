@@ -269,6 +269,7 @@ public class Listener extends AbstractActor {
 			));
 		} catch (IOException e) {
 			e.printStackTrace();
+			return null;
 		}
 	}
 
